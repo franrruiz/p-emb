@@ -42,10 +42,6 @@ OPTIONS:
                        [default: disabled]
 -bernoulli             use Bernoulli likelihood instead of Poisson
                        [default: disabled]
--price <int>           specify the length of the price vectors
-                       [default: 0 ---no price vectors]
--normPrice             normalize the given prices by dividing by their mean
-                       [default: disabled]
 
 -negsamples <int>      number of negative samples (if <=0, all negative samples
                        are included in the objective function)
@@ -88,10 +84,6 @@ OPTIONS:
                        [default: 1.0]
 -s2theta <double>      variance of the prior over the user vectors
                        [default: 1.0]
--s2gamma <double>      variance of the prior over the per-user price vectors
-                       [default: 1.0]
--s2beta <double>       variance of the prior over the per-item price vectors
-                       [default: 1.0]
 -s2all <double>        set all the prior variances
 -s2noise <double>      variance of the Gaussian likelihood (only if Gaussian
                        model)
@@ -108,9 +100,6 @@ OPTIONS:
                        [default: disabled ---random initialization]
 -iniThetaVal <double>  initialize all user vectors to this value (overwrites
                        '-iniPath' for the user vectors).
-                       [default: disabled ---random initialization]
--iniPriceVal <double>  initialize all price vectors to this value (overwrites
-                       '-iniPath' for the price vectors).
                        [default: disabled ---random initialization]
 
 -seed <int>            set random seed
@@ -170,16 +159,6 @@ validation.tsv  contains the validation set, used to assess convergence, in the
                 look for all the lines with the same (user_id,session_id) pair
                 in train.tsv in order to obtain the context
 
-item_sess_price.tsv  if '-price N' is specified, with N>0, this file is required.
-                     It contains the prices for each item and session, with the
-                     following format for each line (tab-separated):
-                          item_id   session_id   price
-                     NOTE: There must be at least as many lines in this file
-                     as #unique_sessions x #unique_items in the train, test and
-                     validation files. Lines that contain an item_id or
-                     session_id that is not found in the data files will be
-                     ignored (and will raise a warning)
-
 Output
 ------
 
@@ -192,13 +171,6 @@ Output
 +param_theta.txt: If '-userVec N' is specified with N>0, this file will also
                   be created, containing the per-user vectors. Its format is:
           line_number    user_id    value_1    [value_2    [value_3    [...]]]
-
-If '-price N' is specified with N>0, the price vectors will also be part of the
-output:
-+param_gamma.txt: The per-user price vectors, with the format:
-          line_number    user_id    value_1    [value_2    [value_3    [...]]]
-+param_beta.txt:  The per-item price vectors, with the format:
-          line_number    item_id    value_1    [value_2    [value_3    [...]]]
 
 NOTE: Intermediate files (saved every saveCycle iterations) will also be created
       with the same format. The file names will contain the iteration number.
