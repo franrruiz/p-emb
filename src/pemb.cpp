@@ -30,6 +30,8 @@ int main (int argc, char *argv[]) {
     data.create_transactions_test(param);
     // Create output folder
     my_output::create_output_folder(data,param);
+    // Print vocabulary
+    my_output::write_vocab(data,param);
     // Read prices
     if(param.flag_price>0) {
         std::cout << "Reading prices..." << endl;
@@ -37,6 +39,21 @@ int main (int argc, char *argv[]) {
         my_input::normalize_prices(data,param);
         my_output::write_normalized_prices(data,param);
         my_input::take_log_prices(data,param);
+    }
+    // Read usergroups,itemgroups,sess_days
+    if(param.flag_day) {
+        // read userGroup.tsv
+        std::cout << "Reading user groups..." << endl;
+        my_input::read_usergroups(data,param);
+        // read itemGroup.tsv
+        std::cout << "Reading item groups..." << endl;
+        my_input::read_itemgroups(data,param);
+        // read sess_days.tsv
+        std::cout << "Reading session/days mapping..." << endl;
+        my_input::read_sess_days(data,param);
+        // Create lines_per_xday and count_trans_per_xday
+        my_input::create_lines_per_xday(data,param);
+        data.create_count_trans_per_xday(param);
     }
 
     /******** Write log file ********/
@@ -137,7 +154,7 @@ int main (int argc, char *argv[]) {
         //my_output::write_max_file(param,duration,val_llh,why);
         //my_infer_ppca::compute_test_performance(duration,data,hyper,param,pvar);
     } else {
-        val_llh = my_infer::compute_val_likelihood(false,duration,data,param,hyper,pvar);
+        val_llh = my_infer::compute_val_likelihood(true,duration,data,param,hyper,pvar);
         my_output::write_max_file(param,duration,val_llh,why);
         my_infer::compute_test_performance(duration,data,hyper,param,pvar);
     }

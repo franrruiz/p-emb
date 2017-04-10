@@ -13,6 +13,7 @@ public:
 	int Niter;
 	int negsamples;
 	double zeroFactor;
+	int batchsize;
 	string label;
 	int flag_avgContext;
 	bool flag_itemIntercept;
@@ -26,6 +27,8 @@ public:
 	int flag_userVec;
 	bool flag_binarizeContext;
 	int flag_price;
+	bool flag_day;
+	int flag_tripEffects;
 	bool flag_normPrice;
 	bool flag_regularization;
 	double eta;
@@ -41,6 +44,10 @@ public:
 	bool noVal;
 	bool noTest;
 
+	int lf_keepOnly;
+	int lf_keepAbove;
+	int lf_flag;
+
 	int it;
 	int n_val_decr;
 	double prev_val_llh;
@@ -54,6 +61,7 @@ public:
 		saveCycle = 100;
 		negsamples = 10;
 		zeroFactor = 0.1;
+		batchsize = -1;
 		Niter = 1500;
 		flag_avgContext = 1;
 		flag_itemIntercept = false;
@@ -67,8 +75,10 @@ public:
 		flag_userVec = 0;
 		flag_binarizeContext = false;
 		flag_price = 0;
+		flag_day = false;
 		flag_normPrice = false;
 		flag_regularization = true;
+		flag_tripEffects = 0;
 		label = "";
 		eta = 0.1;
 		gamma = 0.9;
@@ -82,6 +92,10 @@ public:
 		iniThetaVal = 0.0;
 		flag_iniPriceVal = false;
 		iniPriceVal = 0.0;
+
+		lf_keepOnly = -1;
+		lf_keepAbove = -1;
+		lf_flag = 0;
 
 		it = 0;
 		prev_val_llh = 0.0;
@@ -97,7 +111,13 @@ public:
 	double s2theta;
 	double s2gamma;
 	double s2beta;
+	double s2trip;
+	double mean_gamma;
+	double mean_beta;
+	double mean_trip;
 	double s2noise;
+	double mean_xday;
+	double s2xday;
 
 	my_hyper() {
 		s2rho = 1.0;
@@ -106,6 +126,12 @@ public:
 		s2noise = 1.0;
 		s2gamma = 1.0;
 		s2beta = 1.0;
+		s2trip = 1.0;
+		mean_gamma = -5.0;
+		mean_beta = -5.0;
+		s2xday = 0.1;
+		mean_xday = -5.0;
+		mean_trip = -5.0;
 	}
 };
 
@@ -224,6 +250,10 @@ public:
 	int Nusers;		// Number of users
 	int Nsessions;	// Number of sessions
 	int Ntrans;		// Number of transactions (a transaction is a (user,session) pair)
+	int Ndays;		// Number of calendar days
+	int Nweekdays;  // Number of weekdays (typically 7)
+	int NuserGroups;	// Number of user groups
+	int NitemGroups;	// Number of item groups
 
 	// Structs with the actual data
 	my_data_aux obs;			// Observations (train)
@@ -236,12 +266,17 @@ public:
 
 	// sum(log(y!))
 	double sum_log_yfact;
+	Matrix1D<double> sum_log_yfact_per_trans;
 
 	// Mapping from ids to indices
 	std::map<unsigned long long, int> item_ids;		// Map containing the item id's
 	std::map<unsigned long long, int> user_ids;		// Map containing the user id's
 	std::map<unsigned long long, int> session_ids;	// Map containing the session id's
 	std::map<hpf_trans_aux,int> trans_ids;			// Map containing the transaction id's (for train+validation)
+	std::map<unsigned long long,int> day_ids;			// Map containing the day id's
+	std::map<unsigned long long,int> weekday_ids;		// Map containing the weekday id's
+	std::map<unsigned long long,int> usergroup_ids;		// Map containing the usergroups id's
+	std::map<unsigned long long,int> itemgroup_ids;		// Map containing the itemgroups id's
 
 	// Misc lists
 	Matrix1D<std::vector<int>> sessions_per_user;	// For each user, list of sessions in which that user appears
@@ -256,6 +291,22 @@ public:
 	Matrix1D<std::vector<int>> lines_per_user;		// For each user, list of "lines" in train.tsv in which that user appears
 	Matrix1D<int> Nitems_per_trans;					// For each transaction, sum(y)
 	Matrix1D<int> sum_sizetrans_per_item;			// For each item, sum_t(length(t)) for all the transactions t in which that item appears
+	Matrix1D<int> group_per_user;					// For each user, group to which she belongs
+	Matrix1D<int> group_per_item;					// For each item, group to which it belongs
+	Matrix1D<std::vector<int>> users_per_group;		// For each usergroup, list of the users that belong to that group
+	Matrix1D<std::vector<int>> items_per_group;		// For each itemgroup, list of the items that belong to that group
+	Matrix1D<int> day_per_session;					// For each session, day_id to which it corresponds
+	Matrix1D<int> weekday_per_session;				// For each session, weekday_id to which it corresponds
+	Matrix1D<double> hour_per_session;				// For each session, hour of the day
+	Matrix1D<std::vector<int>> sessions_per_day;	// For each day, a list of sessions
+	Matrix1D<std::vector<int>> sessions_per_weekday;// For each weekday, a list of sessions
+	Matrix3D<std::vector<int>> lines_per_xday;		// For each day, a list of "lines" in train.tsv
+
+	// Misc auxiliary counts
+	Matrix2D<int> count_trans_per_xday;				// Each entry = [#trips that all users from group g_u make in day d]
+
+	// Valid list of items
+	std::vector<unsigned long long> valid_items;	// Used to remove low-frequency items
 
 	// Lists for transactions in test set (same definition as above, but for test set only)
 	int test_Ntrans;
@@ -278,6 +329,10 @@ public:
 		Nusers = 0;
 		Nsessions = 0;
 		Ntrans = 0;
+		Ndays = 0;
+		Nweekdays = 0;
+		NuserGroups = 0;
+		NitemGroups = 0;
 		test_Ntrans = 0;
 		maxNi = 0;
 		uniform_dist = nullptr;
@@ -444,6 +499,16 @@ public:
 			Nitems_per_trans.set_object(idx_trans,aux_int);
 		}
 
+		// Compute sum_log_yfact_per_trans
+		sum_log_yfact_per_trans = Matrix1D<double>(Ntrans);
+		for(int t=0; t<Ntrans; t++) {
+			double sum = 0.0;
+			for(int &ll : lines_per_trans.get_object(t)) {
+				sum += my_logfactorial(obs.y_rating[ll]);
+			}
+			sum_log_yfact_per_trans.set_object(t,sum);
+		}
+
 		// Set maxNi
 		for(int t=0; t<Ntrans; t++) {
 			int Nt = items_per_trans.get_object(t).size();
@@ -482,6 +547,23 @@ public:
 				cc += items_per_trans.get_object(t).size();
 			}
 			sum_sizetrans_per_item.set_object(i,cc);
+		}
+	}
+
+	void create_count_trans_per_xday(const my_param &param) {
+		// Create count_trans_per_xday
+		if(param.flag_day) {
+			count_trans_per_xday = Matrix2D<int>(NuserGroups,Ndays);
+			set_to_zero(count_trans_per_xday);
+			// iterate over all transactions
+			for(auto const &iter : trans_ids) {
+				int u = iter.first.u;
+				int s = iter.first.s;
+				int d = day_per_session.get_object(s);
+				int g_u = group_per_user.get_object(u);
+				int val = 1+count_trans_per_xday.get_object(g_u,d);
+				count_trans_per_xday.set_object(g_u,d,val);
+			}
 		}
 	}
 
@@ -574,6 +656,14 @@ public:
 			m.set_object(n,0);
 		}
 	}
+
+	inline void set_to_zero(Matrix2D<int> &m) {
+		for(int n=0; n<m.get_size1(); n++) {
+			for(int k=0; k<m.get_size2(); k++) {
+				m.set_object(n,k,0);
+			}
+		}
+	}
 };
 
 class my_pvar_aux {
@@ -624,14 +714,19 @@ public:
 		grad_neg = 0.0;
 	}
 
-	inline double set_grad_to_prior(double prior) {
+	inline double set_grad_to_prior(double ss2) {
+		double logp = set_grad_to_prior(0.0,ss2);
+		return logp;
+	}
+
+	inline double set_grad_to_prior(double mm, double ss2) {
 		double logp;
 		if(flag_positive) {
-			grad = -e_log/prior;
-			logp = 0.5*e_log*grad;
+			grad = -(e_log-mm)/ss2;
+			logp = 0.5*(e_log-mm)*grad;
 		} else {
-			grad = -e_x/prior;
-			logp = 0.5*e_x*grad;
+			grad = -(e_x-mm)/ss2;
+			logp = 0.5*(e_x-mm)*grad;
 		}
 		grad_neg = 0.0;
 		return logp;
@@ -690,7 +785,10 @@ public:
 	Matrix1D<my_pvar_aux> lambda0;  // item intercepts
 	Matrix2D<double> sum_alpha;     // auxiliary variable (sum of alpha's in the context)
 	Matrix2D<my_pvar_aux> gamma;    // price sensitivity vectors (per-user)
-	Matrix2D<my_pvar_aux> beta;     // price sensitivity vectors (per-item)
+	Matrix2D<my_pvar_aux> beta;		// price sensitivity vectors (per-item)
+	Matrix3D<my_pvar_aux> x_gid;	// per-day effects
+	Matrix2D<my_pvar_aux> theta_trip;	// per-trip variables
+	Matrix2D<my_pvar_aux> beta_trip;	// per-item variables corresponding to per-trip effects
 
 	my_pvar(const my_data &data, const my_param &param) {
 		int sizeRho = (param.flag_ppca?data.Ntrans:data.Nitems);
@@ -708,6 +806,13 @@ public:
 		if(param.flag_price>0) {
 			gamma = Matrix2D<my_pvar_aux>(data.Nusers,param.flag_price);
 			beta = Matrix2D<my_pvar_aux>(data.Nitems,param.flag_price);
+		}
+		if(param.flag_day) {
+			x_gid = Matrix3D<my_pvar_aux>(data.NuserGroups,data.NitemGroups,data.Ndays);
+		}
+		if(param.flag_tripEffects>0) {
+			theta_trip = Matrix2D<my_pvar_aux>(data.Ntrans,param.flag_tripEffects);
+			beta_trip = Matrix2D<my_pvar_aux>(data.Nitems,param.flag_tripEffects);
 		}
 	}
 
@@ -787,6 +892,29 @@ public:
 				initialize_from_file(param.iniPath+"/param_gamma.txt",data.user_ids,gamma,param,true);
 				initialize_from_file(param.iniPath+"/param_beta.txt",data.item_ids,beta,param,true);
 			}
+
+			// initialize per-day effect variables
+			if(param.flag_day) {
+				if(param.iniPath=="") {
+					// initialize randomly
+					initialize_matrix_randomly(semilla,x_gid,val_ini,param.stdIni,param.flag_additiveMean);
+				} else {
+					// initialize from file
+					initialize_from_file_xday(param.iniPath+"/param_xday.txt",data.usergroup_ids,data.itemgroup_ids,data.day_ids,x_gid,param,param.flag_additiveMean);
+				}
+			}
+		}
+
+		// initialize trip effects
+		if(param.flag_tripEffects>0) {
+			val_ini = 1.0/sqrt(static_cast<double>(param.flag_tripEffects));
+			if(param.iniPath=="") {
+				// initialize randomly
+				initialize_matrix_randomly(semilla,theta_trip,val_ini,param.stdIni,true);
+				initialize_matrix_randomly(semilla,beta_trip,val_ini,param.stdIni,true);
+			} else {
+				std::cerr << "[WARN] Trip effects will be initialized randomly" << endl;
+			}
 		}
 	}
 
@@ -800,6 +928,16 @@ public:
 		for(int i=0; i<M.get_size1(); i++) {
 			for(int k=0; k<M.get_size2(); k++) {
 				M.get_object(i,k).initialize_random(semilla,vv,ss,pp);
+			}
+		}
+	}
+
+	static void initialize_matrix_randomly(gsl_rng *semilla, Matrix3D<my_pvar_aux> &M, double vv, double ss, bool pp) {
+		for(int i=0; i<M.get_size1(); i++) {
+			for(int k=0; k<M.get_size2(); k++) {
+				for(int m=0; m<M.get_size3(); m++) {
+					M.get_object(i,k,m).initialize_random(semilla,vv,ss,pp);
+				}
 			}
 		}
 	}
@@ -864,6 +1002,40 @@ public:
 		}
 	  	fclose(fin);
 	}
+
+	static void initialize_from_file_xday(string fname, const std::map<unsigned long long, int> &usergroup_ids, const std::map<unsigned long long, int> &itemgroup_ids, const std::map<unsigned long long, int> &day_ids, \
+										  Matrix3D<my_pvar_aux> &M, const my_param &param, bool pp) {
+		FILE *fin = fopen(fname.c_str(),"r");
+	  	if(!fin) {
+	  		std::cerr << "[ERR] Unable to open " << fname << endl;
+	  		assert(0);
+	  	}
+	  	unsigned long long gu_id;
+	  	unsigned long long gi_id;
+	  	unsigned long long d_id;
+	  	int ll;
+	  	int g_u;
+	  	int g_i;
+	  	int d;
+	  	double vv;
+		while(!feof(fin)){
+			// Read a line
+			fscanf(fin,"%d\t%llu\t%llu\t%llu\t%lf\n",&ll,&gu_id,&gi_id,&d_id,&vv);
+			std::map<unsigned long long,int>::const_iterator iter_gu = usergroup_ids.find(gu_id);
+			std::map<unsigned long long,int>::const_iterator iter_gi = itemgroup_ids.find(gi_id);
+			std::map<unsigned long long,int>::const_iterator iter_d = day_ids.find(d_id);
+			if(iter_gu==usergroup_ids.end() || iter_gi==itemgroup_ids.end() || iter_d==day_ids.end()) {
+		  		std::cerr << "[ERR] Error reading line " << ll << " of " << fname << endl;
+		  		std::cerr << "      One of the indices was not found in data files" << endl;
+		  		assert(0);
+			}
+			g_u = iter_gu->second;
+			g_i = iter_gi->second;
+			d = iter_d->second;
+			M.get_object(g_u,g_i,d).initialize_value(vv,pp);
+		}
+	  	fclose(fin);
+	}	
 
 	static void initialize_from_file_ppca(string fname, my_data &data, Matrix2D<my_pvar_aux> &M, const my_param &param, bool pp) {
 		FILE *fin = fopen(fname.c_str(),"r");

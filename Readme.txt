@@ -20,11 +20,6 @@ OPTIONS:
 
 -K <int>               number of latent factors
                        [default: 50]
--userVec <int>         use per-user vectors (if 0, no per-user vectors are
-                       included; if 1, the per-user vectors are added to the
-                       context; if 2, the per-user vectors are multiplicative;
-                       if 3, the per-user vectors interact with alpha)
-                       [default: 0]
 -itemIntercept         use per-item intercepts
                        [default: disabled]
 -avgContext <int>      define context averaging (if 0, no averaging is
@@ -43,6 +38,9 @@ OPTIONS:
 -bernoulli             use Bernoulli likelihood instead of Poisson
                        [default: disabled]
 
+-batchsize <int>       number of baskets to form minibatches (if <=0, uses all
+                       baskets in the dataset)
+                       [default: -1]
 -negsamples <int>      number of negative samples (if <=0, all negative samples
                        are included in the objective function)
                        [default: 10]
@@ -54,6 +52,14 @@ OPTIONS:
                        [default: 0.1]
 -max-iterations <int>  maximum number of iterations
                        [default: 1500]
+
+-keepOnly <int>        only consider the N most frequent items; ignore the rest
+                       (in case of ties, this can keep more than N items). If <=0;
+                       do not ignore any item
+                       [default: -1]
+-keepAbove <int>       only consider the items that appear in at least N baskets;
+                       ignore the rest (if <=0; do not ignore any item)
+                       [default: -1]
 
 -noVal                   ignore the validation file (if present) and stop the
                          simulation only after max-iterations

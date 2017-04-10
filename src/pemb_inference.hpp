@@ -7,20 +7,22 @@ public:
 	static void inference_step(my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar, gsl_rng *semilla) {
 		double logp;
 
-		// 0. Create zero-valued vectors/matrices of counts (for negative samples)
-		Matrix1D<int> neg_item_counts = Matrix1D<int>(data.Nitems);
-		set_to_zero(neg_item_counts);
-		//    Also create auxiliary matrix of negative gradients for alpha
-		Matrix2D<double> grad_neg_alpha_aux;
-		if(param.flag_userVec==3) {
-			grad_neg_alpha_aux = Matrix2D<double>(data.Nitems,param.K);
-			set_to_zero(grad_neg_alpha_aux);
+		// 0. Subsample transactions at random
+		int batchsize = my_min(param.batchsize,data.Ntrans);
+		if(batchsize<=0) {
+			batchsize = data.Ntrans;
 		}
+		std::vector<int> transaction_all(data.Ntrans);
+		for(int t=0; t<data.Ntrans; t++) {
+			transaction_all.at(t) = t;
+		}
+		std::vector<int> transaction_list(batchsize);
+		gsl_ran_choose(semilla,transaction_list.data(),batchsize,transaction_all.data(),data.Ntrans,sizeof(int));
 
-		// 1. Compute the sum ot the alpha's
+		// 1. Compute the sum of the alpha's
 		if(!param.flag_ppca) {
 			std::cout << "  computing sum of alphas..." << endl;
-			compute_sum_alpha(data,hyper,param,pvar);
+			compute_sum_alpha(data,hyper,param,pvar,transaction_list);
 		}
 
 		// 2. Initialize all gradients to prior
@@ -33,15 +35,17 @@ public:
 
 		// 3. Increase the gradients with the datapoints where y>0
 		std::cout << "  processing positive observations..." << endl;
-		logp += process_pos_observations(data,hyper,param,pvar);
+		logp += process_pos_observations(data,hyper,param,pvar,transaction_list);
 		
 		// 4. Increase the gradients with (a subset of) the datapoints where y=0
 		std::cout << "  processing negative observations..." << endl;
-		logp += process_neg_observations(semilla,data,hyper,param,pvar,neg_item_counts,grad_neg_alpha_aux);
-		
+		logp += process_neg_observations(semilla,data,hyper,param,pvar,transaction_list);
+
 		// 5. Scale all the negative gradients
+		/*
 		std::cout << "  scaling negative gradients..." << endl;
-		scale_neg_gradient(data,hyper,param,pvar,neg_item_counts,grad_neg_alpha_aux);
+		scale_neg_gradient(data,hyper,param,pvar,neg_item_counts,grad_neg_alpha_aux,neg_xday_counts);
+		*/
 
 		// 6. Take gradient step
 		std::cout << "  taking grad step..." << endl;
@@ -62,25 +66,74 @@ public:
 			logp += set_grad_to_prior_mat(pvar.theta,hyper.s2theta);
 		}
 		if(param.flag_price>0) {
-			logp += set_grad_to_prior_mat(pvar.gamma,hyper.s2gamma);
-			logp += set_grad_to_prior_mat(pvar.beta,hyper.s2beta);
+			logp += set_grad_to_prior_mat(pvar.gamma,hyper.mean_gamma,hyper.s2gamma);
+			logp += set_grad_to_prior_mat(pvar.beta,hyper.mean_beta,hyper.s2beta);
+		}
+		if(param.flag_day) {
+			logp += set_grad_to_prior_mat(pvar.x_gid,hyper.mean_xday,hyper.s2xday);
+		}
+		if(param.flag_tripEffects>0) {
+			logp += set_grad_to_prior_mat(pvar.theta_trip,hyper.mean_trip,hyper.s2trip);
+			logp += set_grad_to_prior_mat(pvar.beta_trip,hyper.mean_trip,hyper.s2trip);
 		}
 		return logp;
 	}
 
-	static double set_grad_to_prior_mat(Matrix1D<my_pvar_aux> &M, double val) {
+	static double set_grad_to_prior_mat(Matrix1D<my_pvar_aux> &M, double ss2) {
 		double logp = 0.0;
 		for(int i=0; i<M.get_size1(); i++) {
-			logp += M.get_object(i).set_grad_to_prior(val);
+			logp += M.get_object(i).set_grad_to_prior(ss2);
 		}
 		return logp;
 	}
 
-	static double set_grad_to_prior_mat(Matrix2D<my_pvar_aux> &M, double val) {
+	static double set_grad_to_prior_mat(Matrix1D<my_pvar_aux> &M, double mm, double ss2) {
+		double logp = 0.0;
+		for(int i=0; i<M.get_size1(); i++) {
+			logp += M.get_object(i).set_grad_to_prior(mm,ss2);
+		}
+		return logp;
+	}
+
+	static double set_grad_to_prior_mat(Matrix2D<my_pvar_aux> &M, double ss2) {
 		double logp = 0.0;
 		for(int i=0; i<M.get_size1(); i++) {
 			for(int j=0; j<M.get_size2(); j++) {
-				logp += M.get_object(i,j).set_grad_to_prior(val);
+				logp += M.get_object(i,j).set_grad_to_prior(ss2);
+			}
+		}
+		return logp;
+	}
+
+	static double set_grad_to_prior_mat(Matrix2D<my_pvar_aux> &M, double mm, double ss2) {
+		double logp = 0.0;
+		for(int i=0; i<M.get_size1(); i++) {
+			for(int j=0; j<M.get_size2(); j++) {
+				logp += M.get_object(i,j).set_grad_to_prior(mm,ss2);
+			}
+		}
+		return logp;
+	}
+
+	static double set_grad_to_prior_mat(Matrix3D<my_pvar_aux> &M, double ss2) {
+		double logp = 0.0;
+		for(int i=0; i<M.get_size1(); i++) {
+			for(int j=0; j<M.get_size2(); j++) {
+				for(int k=0; k<M.get_size3(); k++) {
+					logp += M.get_object(i,j,k).set_grad_to_prior(ss2);
+				}
+			}
+		}
+		return logp;
+	}
+
+	static double set_grad_to_prior_mat(Matrix3D<my_pvar_aux> &M, double mm, double ss2) {
+		double logp = 0.0;
+		for(int i=0; i<M.get_size1(); i++) {
+			for(int j=0; j<M.get_size2(); j++) {
+				for(int k=0; k<M.get_size3(); k++) {
+					logp += M.get_object(i,j,k).set_grad_to_prior(mm,ss2);
+				}
 			}
 		}
 		return logp;
@@ -99,6 +152,13 @@ public:
 			set_grad_to_zero_mat(pvar.gamma);
 			set_grad_to_zero_mat(pvar.beta);
 		}
+		if(param.flag_day) {
+			set_grad_to_zero_mat(pvar.x_gid);
+		}
+		if(param.flag_tripEffects>0) {
+			set_grad_to_zero_mat(pvar.theta_trip);
+			set_grad_to_zero_mat(pvar.beta_trip);
+		}
 		return 0.0;
 	}
 
@@ -116,9 +176,27 @@ public:
 		}
 	}
 
+	static void set_grad_to_zero_mat(Matrix3D<my_pvar_aux> &M) {
+		for(int i=0; i<M.get_size1(); i++) {
+			for(int j=0; j<M.get_size2(); j++) {
+				for(int k=0; k<M.get_size3(); k++) {
+					M.get_object(i,j,k).set_grad_to_zero();
+				}
+			}
+		}
+	}
+
 	static void compute_sum_alpha(my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar) {
-		// Loop over all transactions
+		std::vector<int> transaction_all(data.Ntrans);
 		for(int t=0; t<data.Ntrans; t++) {
+			transaction_all.at(t) = t;
+		}
+		compute_sum_alpha(data,hyper,param,pvar,transaction_all);
+	}
+
+	static void compute_sum_alpha(my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar, std::vector<int> &transaction_list) {
+		// Loop over all transactions
+		for(int &t : transaction_list) {
 			double aux;
 			int i;
 			double y;
@@ -139,16 +217,16 @@ public:
 		}
 	}
 
-	static double process_pos_observations(my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar) {
-		double logp;
+	static double process_pos_observations(my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar, std::vector<int> &transaction_list) {
+		double logp = 0.0;
 		int u;
 		int s;
 		int i;
-		int t;
 		double y;
 		double *suma = new double[param.K];
 		double mm;
 		double argument;
+		double trip_effect;
 		double price;
 		double dinner_dz;
 		double y_minus_mean;
@@ -156,211 +234,208 @@ public:
 		int ll;
 		double y_j;
 		double denomAvgContext;
+		int batchsize = transaction_list.size();
+		double sviFactor;
+
+		// Set sviFactor
+		sviFactor = static_cast<double>(data.Ntrans)/static_cast<double>(batchsize);
 
 		// Initialize logp
 		if(param.flag_gaussian) {
-			logp = -0.5*static_cast<double>(data.obs.T)*my_log(2.0*M_PI*hyper.s2noise);
+			for(int &t : transaction_list) {
+				logp += static_cast<double>(data.lines_per_trans.get_object(t).size());
+			}
+			logp *= -0.5*my_log(2.0*M_PI*hyper.s2noise);
 		} else if(param.flag_bernoulli) {
 			logp = 0.0;
 		} else {
-			logp = -data.sum_log_yfact;
+			for(int &t : transaction_list) {
+				logp -= data.sum_log_yfact_per_trans.get_object(t);
+			}
 		}
 
-		// For each line
-		for(unsigned int idx_t=0; idx_t<data.obs.T; idx_t++) {
-			// Get the user, item, session, transaction, and value
-			u = data.obs.y_user[idx_t];
-			i = data.obs.y_item[idx_t];
-			s = data.obs.y_sess[idx_t];
-			t = data.obs.y_trans[idx_t];
-			if(param.flag_bernoulli) {
-				y = 1.0;
-			} else {
-				y = static_cast<double>(data.obs.y_rating[idx_t]);
-			}
-
-			// Remove the contribution of item i from sum(y_j*alpha_j)
-			substract_contribution_sum_alpha(t,i,y,data,param,pvar,suma);
-
-			// If avgContext, scale 'suma' accordingly
-			if((param.flag_avgContext==1) && (data.items_per_trans.get_object(t).size()>1)) {
-				denomAvgContext = data.Nitems_per_trans.get_object(t)-y;
-				for(int k=0; k<param.K; k++) {
-					suma[k] /= denomAvgContext;
-				}
-			} else if((param.flag_avgContext==2) && (data.items_per_trans.get_object(t).size()>1)) {
-				denomAvgContext = data.items_per_trans.get_object(t).size()-1.0;
-				for(int k=0; k<param.K; k++) {
-					suma[k] /= denomAvgContext;
-				}
-			} else {
-				denomAvgContext = 1.0;
-			}
-
-			// Compute the Poisson mean
-			price = data.get_price(i,s,param);
-			mm = compute_mean(param,pvar,i,u,suma,argument,price);
-			y_minus_mean = y-mm;
-
-			// Increase log_p
-			if(param.flag_bernoulli) {
-				logp += my_log(mm);
-			} else if(param.flag_gaussian) {
-				logp -= 0.5*my_pow2(y_minus_mean)/hyper.s2noise;
-			} else if(param.flag_additiveMean) {
-				logp += y*my_log(mm)-mm;				
-			} else {
-				logp += y*argument-mm;				
-			}
-
-			// Increase gradient of rho
-			for(int k=0; k<param.K; k++) {
-				if(param.flag_userVec==0) {
-					dinner_dz = suma[k];
-				} else if(param.flag_userVec==1) {
-					dinner_dz = suma[k]+pvar.theta.get_object(u,k).e_x;
-				} else if(param.flag_userVec==2) {
-					dinner_dz = suma[k]*pvar.theta.get_object(u,k).e_x;
-				} else if(param.flag_userVec==3) {
-					dinner_dz = suma[k];
-				}
-				if(param.flag_gaussian) {
-					pvar.rho.get_object(i,k).increase_grad(y_minus_mean*dinner_dz/hyper.s2noise);
-				} else if(param.flag_bernoulli) {
-					pvar.rho.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
-				} else if(param.flag_additiveMean) {
-					pvar.rho.get_object(i,k).increase_grad(dinner_dz*(y/mm-1.0));
+		// For each transaction
+		for(int &t : transaction_list) {
+			// For each line
+			for(int &idx_t : data.lines_per_trans.get_object(t)) {
+				// Get the user, item, session, transaction, and value
+				u = data.obs.y_user[idx_t];
+				i = data.obs.y_item[idx_t];
+				s = data.obs.y_sess[idx_t];
+				price = data.get_price(i,s,param);
+				if(param.flag_bernoulli) {
+					y = 1.0;
 				} else {
-					pvar.rho.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+					y = static_cast<double>(data.obs.y_rating[idx_t]);
 				}
-			}
-			// Increase gradient of alpha for all items in the context
-			for(unsigned int idx_j=0; idx_j<data.items_per_trans.get_object(t).size(); idx_j++) {
-				// Find item j (in context)
-				j = static_cast<int>(data.items_per_trans.get_object(t).at(idx_j));
-				// If item j is indeed in the context (i.e., it is not item i again)
-				if(j!=i) {
-					// Find y_j (number of units purchased of item j)
-					if(param.flag_binarizeContext || param.flag_bernoulli) {
-						y_j = 1.0;
-					} else {
-						ll = data.lines_per_trans.get_object(t).at(idx_j);
-						y_j = static_cast<double>(data.obs.y_rating[ll]);
-					}
-					// Scale down y_j to account for the averaging of elements in context
-					y_j /= denomAvgContext;
-					// Increase gradient
+
+				// Remove the contribution of item i from sum(y_j*alpha_j)
+				substract_contribution_sum_alpha(t,i,y,data,param,pvar,suma);
+
+				// If avgContext, scale 'suma' accordingly
+				if((param.flag_avgContext==1) && (data.items_per_trans.get_object(t).size()>1)) {
+					denomAvgContext = data.Nitems_per_trans.get_object(t)-y;
 					for(int k=0; k<param.K; k++) {
-						if(param.flag_userVec==0) {
-							dinner_dz = y_j*pvar.rho.get_object(i,k).e_x;
-						} else if(param.flag_userVec==1) {
-							dinner_dz = y_j*pvar.rho.get_object(i,k).e_x;
-						} else if(param.flag_userVec==2) {
-							dinner_dz = y_j*pvar.theta.get_object(u,k).e_x*pvar.rho.get_object(i,k).e_x;
-						} else if(param.flag_userVec==3) {
-							dinner_dz = y_j*pvar.rho.get_object(i,k).e_x;
-						}
-						if(param.flag_gaussian) {
-							pvar.alpha.get_object(j,k).increase_grad(y_minus_mean*dinner_dz/hyper.s2noise);
-						} else if(param.flag_bernoulli) {
-							pvar.alpha.get_object(j,k).increase_grad(y_minus_mean*dinner_dz);
-						} else if(param.flag_additiveMean) {
-							pvar.alpha.get_object(j,k).increase_grad(dinner_dz*(y/mm-1.0));
-						} else {
-							pvar.alpha.get_object(j,k).increase_grad(y_minus_mean*dinner_dz);
-						}
+						suma[k] /= denomAvgContext;
 					}
-				}
-			}
-			// Increase gradient of alpha_i (only if param.flag_userVec==3)
-			if(param.flag_userVec==3) {
-				for(int k=0; k<param.K; k++) {
-					dinner_dz = pvar.theta.get_object(u,k).e_x;
-					if(param.flag_gaussian) {
-						pvar.alpha.get_object(i,k).increase_grad(y_minus_mean*dinner_dz/hyper.s2noise);
-					} else if(param.flag_bernoulli) {
-						pvar.alpha.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
-					} else if(param.flag_additiveMean) {
-						pvar.alpha.get_object(i,k).increase_grad(dinner_dz*(y/mm-1.0));
-					} else {
-						pvar.alpha.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+				} else if((param.flag_avgContext==2) && (data.items_per_trans.get_object(t).size()>1)) {
+					denomAvgContext = data.items_per_trans.get_object(t).size()-1.0;
+					for(int k=0; k<param.K; k++) {
+						suma[k] /= denomAvgContext;
 					}
-				}
-			}
-			// Increase gradient of lambda0
-			if(param.flag_itemIntercept) {
-				if(param.flag_gaussian) {
-					pvar.lambda0.get_object(i).increase_grad(y_minus_mean/hyper.s2noise);
-				} else if(param.flag_bernoulli) {
-					pvar.lambda0.get_object(i).increase_grad(y_minus_mean);
-				} else if(param.flag_additiveMean) {
-					pvar.lambda0.get_object(i).increase_grad(y/mm-1.0);
 				} else {
-					pvar.lambda0.get_object(i).increase_grad(y_minus_mean);
+					denomAvgContext = 1.0;
 				}
-			}
-			// Increase gradient of theta
-			if(param.flag_userVec>0) {
+
+				// Compute the Poisson mean
+				mm = compute_mean(data,param,pvar,t,i,u,s,suma,argument,trip_effect);
+				y_minus_mean = y-mm;
+
+				// Increase log_p
+				if(param.flag_bernoulli) {
+					logp += my_log(mm);
+				} else if(param.flag_gaussian) {
+					logp -= 0.5*my_pow2(y_minus_mean)/hyper.s2noise;
+				} else if(param.flag_additiveMean) {
+					logp += (y*my_log(mm)-mm);				
+				} else {
+					logp += (y*argument-mm);
+				}
+
+				// Increase gradients
+				if(param.flag_gaussian) {
+					y_minus_mean /= hyper.s2noise;
+				} else if(param.flag_additiveMean) {
+					y_minus_mean = y/mm-1.0;
+				}
+				y_minus_mean *= sviFactor;
+				// Increase gradient of rho
 				for(int k=0; k<param.K; k++) {
-					if(param.flag_userVec==1) {
-						dinner_dz = pvar.rho.get_object(i,k).e_x;
+					if(param.flag_userVec==0) {
+						dinner_dz = suma[k];
+					} else if(param.flag_userVec==1) {
+						dinner_dz = suma[k]+pvar.theta.get_object(u,k).e_x;
 					} else if(param.flag_userVec==2) {
-						dinner_dz = suma[k]*pvar.rho.get_object(i,k).e_x;
+						dinner_dz = suma[k]*pvar.theta.get_object(u,k).e_x;
 					} else if(param.flag_userVec==3) {
-						dinner_dz = pvar.alpha.get_object(i,k).e_x;
+						dinner_dz = suma[k];
 					}
-					if(param.flag_gaussian) {
-						pvar.theta.get_object(u,k).increase_grad(y_minus_mean*dinner_dz/hyper.s2noise);
-					} else if(param.flag_bernoulli) {
+					pvar.rho.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+				}
+				// Increase gradient of alpha for all items in the context
+				for(unsigned int idx_j=0; idx_j<data.items_per_trans.get_object(t).size(); idx_j++) {
+					// Find item j (in context)
+					j = static_cast<int>(data.items_per_trans.get_object(t).at(idx_j));
+					// If item j is indeed in the context (i.e., it is not item i again)
+					if(j!=i) {
+						// Find y_j (number of units purchased of item j)
+						if(param.flag_binarizeContext || param.flag_bernoulli) {
+							y_j = 1.0;
+						} else {
+							ll = data.lines_per_trans.get_object(t).at(idx_j);
+							y_j = static_cast<double>(data.obs.y_rating[ll]);
+						}
+						// Scale down y_j to account for the averaging of elements in context
+						y_j /= denomAvgContext;
+						// Increase gradient
+						for(int k=0; k<param.K; k++) {
+							if(param.flag_userVec==0) {
+								dinner_dz = y_j*pvar.rho.get_object(i,k).e_x;
+							} else if(param.flag_userVec==1) {
+								dinner_dz = y_j*pvar.rho.get_object(i,k).e_x;
+							} else if(param.flag_userVec==2) {
+								dinner_dz = y_j*pvar.theta.get_object(u,k).e_x*pvar.rho.get_object(i,k).e_x;
+							} else if(param.flag_userVec==3) {
+								dinner_dz = y_j*pvar.rho.get_object(i,k).e_x;
+							}
+							pvar.alpha.get_object(j,k).increase_grad(y_minus_mean*dinner_dz);
+						}
+					}
+				}
+				// Increase gradient of alpha_i (only if param.flag_userVec==3)
+				if(param.flag_userVec==3) {
+					for(int k=0; k<param.K; k++) {
+						dinner_dz = pvar.theta.get_object(u,k).e_x;
+						pvar.alpha.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+					}
+				}
+				// Increase gradient of lambda0
+				if(param.flag_itemIntercept) {
+					pvar.lambda0.get_object(i).increase_grad(y_minus_mean);
+				}
+				// Increase gradient of theta
+				if(param.flag_userVec>0) {
+					for(int k=0; k<param.K; k++) {
+						if(param.flag_userVec==1) {
+							dinner_dz = pvar.rho.get_object(i,k).e_x;
+						} else if(param.flag_userVec==2) {
+							dinner_dz = suma[k]*pvar.rho.get_object(i,k).e_x;
+						} else if(param.flag_userVec==3) {
+							dinner_dz = pvar.alpha.get_object(i,k).e_x;
+						}
 						pvar.theta.get_object(u,k).increase_grad(y_minus_mean*dinner_dz);
-					} else if(param.flag_additiveMean) {
-						pvar.theta.get_object(u,k).increase_grad(dinner_dz*(y/mm-1.0));
+					}
+				}
+				// Increase gradient of the price vectors
+				for(int k=0; k<param.flag_price; k++) {
+					// gamma
+					dinner_dz = -price*pvar.beta.get_object(i,k).e_x;
+					if(!param.flag_additiveMean) {
+						pvar.gamma.get_object(u,k).increase_grad(y_minus_mean*dinner_dz);
 					} else {
-						pvar.theta.get_object(u,k).increase_grad(y_minus_mean*dinner_dz);
+						std::cerr << "[ERR] Additive means cannot be used in combination with price" << endl;
+						assert(0);
+					}
+					// beta
+					dinner_dz = -price*pvar.gamma.get_object(u,k).e_x;
+					if(!param.flag_additiveMean) {
+						pvar.beta.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+					} else {
+						std::cerr << "[ERR] Additive means cannot be used in combination with price" << endl;
+						assert(0);
 					}
 				}
-			}
-			// Increase gradient of the price vectors
-			for(int k=0; k<param.flag_price; k++) {
-				// gamma
-				dinner_dz = -price*pvar.beta.get_object(i,k).e_x;
-				if(param.flag_gaussian) {
-					pvar.gamma.get_object(u,k).increase_grad(y_minus_mean*dinner_dz/hyper.s2noise);
-				} else if(param.flag_bernoulli) {
-					pvar.gamma.get_object(u,k).increase_grad(y_minus_mean*dinner_dz);
-				} else if(param.flag_additiveMean) {
-					std::cerr << "[ERR] Additive means cannot be used in combination with price" << endl;
-					assert(0);
-				} else {
-					pvar.gamma.get_object(u,k).increase_grad(y_minus_mean*dinner_dz);
+				// Increase gradient of xday
+				if(param.flag_day) {
+					int g_u = data.group_per_user.get_object(u);
+					int g_i = data.group_per_item.get_object(i);
+					int d = data.day_per_session.get_object(s);
+					pvar.x_gid.get_object(g_u,g_i,d).increase_grad(y_minus_mean);
 				}
-				// beta
-				dinner_dz = -price*pvar.gamma.get_object(u,k).e_x;
-				if(param.flag_gaussian) {
-					pvar.beta.get_object(i,k).increase_grad(y_minus_mean*dinner_dz/hyper.s2noise);
-				} else if(param.flag_bernoulli) {
-					pvar.beta.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
-				} else if(param.flag_additiveMean) {
-					std::cerr << "[ERR] Additive means cannot be used in combination with price" << endl;
-					assert(0);
-				} else {
-					pvar.beta.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+				// Increase gradient of trip effects
+				for(int k=0; k<param.flag_tripEffects; k++) {
+					// theta_trip
+					dinner_dz = pvar.beta_trip.get_object(i,k).e_x/trip_effect;
+					if(!param.flag_additiveMean) {
+						pvar.theta_trip.get_object(t,k).increase_grad(y_minus_mean*dinner_dz);
+					} else {
+						std::cerr << "[ERR] Additive means cannot be used in combination with trip effects" << endl;
+						assert(0);
+					}
+					// beta_trip
+					dinner_dz = pvar.theta_trip.get_object(t,k).e_x/trip_effect;
+					if(!param.flag_additiveMean) {
+						pvar.beta_trip.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+					} else {
+						std::cerr << "[ERR] Additive means cannot be used in combination with trip effects" << endl;
+						assert(0);
+					}
 				}
 			}
 		}
 		delete [] suma;
-		return logp;
+		return(sviFactor*logp);
 	}
 
-	static double process_neg_observations(gsl_rng *semilla, my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar, \
-										   Matrix1D<int> &neg_item_counts, Matrix2D<double> &grad_neg_alpha_aux) {
-		double logp;
+	static double process_neg_observations(gsl_rng *semilla, my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar, std::vector<int> &transaction_list) {
+		double logp = 0.0;
 		int u;
 		int s;
 		int i;
 		double *suma = new double[param.K];
 		double mm;
 		double argument;
+		double trip_effect;
 		double price;
 		double dinner_dz;
 		int j;
@@ -369,16 +444,25 @@ public:
 		double y_minus_mean;
 		double denomAvgContext;
 		int count_i;
+		int batchsize = transaction_list.size();
+		double sviFactor;
+
+		// Set sviFactor
+		sviFactor = static_cast<double>(data.Ntrans)/static_cast<double>(batchsize);
+		int aux_sum = 0;
+		for(int &t : transaction_list) {
+			aux_sum += data.Nitems-static_cast<int>(data.lines_per_trans.get_object(t).size());
+		}
+		sviFactor *= static_cast<double>(aux_sum)/static_cast<double>(batchsize*param.negsamples);
+		sviFactor *= param.zeroFactor;
 
 		// Initialize logp
 		if(param.flag_gaussian) {
-			logp = -0.5*static_cast<double>(data.Ntrans*param.negsamples)*my_log(2.0*M_PI*hyper.s2noise);
-		} else {
-			logp = 0.0;
+			logp = -0.5*static_cast<double>(batchsize*param.negsamples)*my_log(2.0*M_PI*hyper.s2noise);
 		}
 
 		// For each transaction
-		for(int t=0; t<data.Ntrans; t++) {
+		for(int &t : transaction_list) {
 			// Get the user and session
 			u = data.user_per_trans.get_object(t);
 			s = data.session_per_trans.get_object(t);
@@ -387,11 +471,11 @@ public:
 			count_i = 0;
 			while(count_i<param.negsamples) {
 				i = gsl_ran_discrete(semilla,data.negsampling_dis);
+				price = data.get_price(i,s,param);
 				// If this is indeed a negative sample
 				if(data.get_items_in_trans(i,t)<0) {
 					// Increase the counts of processed negative samples
 					count_i++;
-					neg_item_counts.set_object(i,neg_item_counts.get_object(i)+1);
 					// Set 'suma' to sum_alpha
 					set_sum_alpha(t,data,param,pvar,suma);
 					// If avgContext, scale 'suma' accordingly
@@ -409,8 +493,7 @@ public:
 						denomAvgContext = 1.0;
 					}
 					// Compute the Poisson mean
-					price = data.get_price(i,s,param);
-					mm = compute_mean(param,pvar,i,u,suma,argument,price);
+					mm = compute_mean(data,param,pvar,t,i,u,s,suma,argument,trip_effect);
 					y_minus_mean = -mm;
 					// Increase log_p
 					if(param.flag_bernoulli) {
@@ -422,6 +505,13 @@ public:
 					} else {
 						logp -= mm;
 					}
+					// Increase gradients
+					if(param.flag_gaussian) {
+						y_minus_mean /= hyper.s2noise;
+					} else if(param.flag_additiveMean) {
+						y_minus_mean = -1.0;
+					}
+					y_minus_mean *= sviFactor;
 					// Increase gradient of rho
 					for(int k=0; k<param.K; k++) {
 						if(param.flag_userVec==0) {
@@ -433,15 +523,7 @@ public:
 						} else if(param.flag_userVec==3) {
 							dinner_dz = suma[k];
 						}
-						if(param.flag_gaussian) {
-							pvar.rho.get_object(i,k).increase_grad_neg(y_minus_mean*dinner_dz/hyper.s2noise);
-						} else if(param.flag_bernoulli) {
-							pvar.rho.get_object(i,k).increase_grad_neg(y_minus_mean*dinner_dz);
-						} else if(param.flag_additiveMean) {
-							pvar.rho.get_object(i,k).increase_grad_neg(-dinner_dz);
-						} else {
-							pvar.rho.get_object(i,k).increase_grad_neg(y_minus_mean*dinner_dz);
-						}
+						pvar.rho.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
 					}
 					// Increase gradient of alpha for all items in the context
 					for(unsigned int idx_j=0; idx_j<data.items_per_trans.get_object(t).size(); idx_j++) {
@@ -467,45 +549,19 @@ public:
 							} else if(param.flag_userVec==3) {
 								dinner_dz = y_j*pvar.rho.get_object(i,k).e_x;
 							}
-							if(param.flag_gaussian) {
-								pvar.alpha.get_object(j,k).increase_grad_neg(y_minus_mean*dinner_dz/hyper.s2noise);
-							} else if(param.flag_bernoulli) {
-								pvar.alpha.get_object(j,k).increase_grad_neg(y_minus_mean*dinner_dz);
-							} else if(param.flag_additiveMean) {
-								pvar.alpha.get_object(j,k).increase_grad_neg(-dinner_dz);
-							} else {
-								pvar.alpha.get_object(j,k).increase_grad_neg(y_minus_mean*dinner_dz);
-							}
+							pvar.alpha.get_object(j,k).increase_grad(y_minus_mean*dinner_dz);
 						}
 					}
 					// Increase gradient of alpha_i (only if param.flag_userVec==3)
 					if(param.flag_userVec==3) {
-						double aux;
 						for(int k=0; k<param.K; k++) {
 							dinner_dz = pvar.theta.get_object(u,k).e_x;
-							aux = grad_neg_alpha_aux.get_object(i,k);
-							if(param.flag_gaussian) {
-								grad_neg_alpha_aux.set_object(i,k,aux+y_minus_mean*dinner_dz/hyper.s2noise);
-							} else if(param.flag_bernoulli) {
-								grad_neg_alpha_aux.set_object(i,k,aux+y_minus_mean*dinner_dz);
-							} else if(param.flag_additiveMean) {
-								grad_neg_alpha_aux.set_object(i,k,aux-dinner_dz);
-							} else {
-								grad_neg_alpha_aux.set_object(i,k,aux+y_minus_mean*dinner_dz);
-							}
+							pvar.alpha.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
 						}
 					}
 					// Increase gradient of lambda0
 					if(param.flag_itemIntercept) {
-						if(param.flag_gaussian) {
-							pvar.lambda0.get_object(i).increase_grad_neg(y_minus_mean/hyper.s2noise);
-						} else if(param.flag_bernoulli) {
-							pvar.lambda0.get_object(i).increase_grad_neg(y_minus_mean);
-						} else if(param.flag_additiveMean) {
-							pvar.lambda0.get_object(i).increase_grad_neg(-1.0);
-						} else {
-							pvar.lambda0.get_object(i).increase_grad_neg(y_minus_mean);
-						}
+						pvar.lambda0.get_object(i).increase_grad(y_minus_mean);
 					}
 					// Increase gradient of theta
 					if(param.flag_userVec>0) {
@@ -517,55 +573,66 @@ public:
 							} else if(param.flag_userVec==3) {
 								dinner_dz = pvar.alpha.get_object(i,k).e_x;
 							}
-							if(param.flag_gaussian) {
-								pvar.theta.get_object(u,k).increase_grad_neg(y_minus_mean*dinner_dz/hyper.s2noise);
-							} else if(param.flag_bernoulli) {
-								pvar.theta.get_object(u,k).increase_grad_neg(y_minus_mean*dinner_dz);
-							} else if(param.flag_additiveMean) {
-								pvar.theta.get_object(u,k).increase_grad_neg(-dinner_dz);
-							} else {
-								pvar.theta.get_object(u,k).increase_grad_neg(y_minus_mean*dinner_dz);
-							}
+							pvar.theta.get_object(u,k).increase_grad(y_minus_mean*dinner_dz);
 						}
 					}
 					// Increase gradient of the price vectors
 					for(int k=0; k<param.flag_price; k++) {
 						// gamma
 						dinner_dz = -price*pvar.beta.get_object(i,k).e_x;
-						if(param.flag_gaussian) {
-							pvar.gamma.get_object(u,k).increase_grad_neg(y_minus_mean*dinner_dz/hyper.s2noise);
-						} else if(param.flag_bernoulli) {
-							pvar.gamma.get_object(u,k).increase_grad_neg(y_minus_mean*dinner_dz);
-						} else if(param.flag_additiveMean) {
+						if(!param.flag_additiveMean) {
+							pvar.gamma.get_object(u,k).increase_grad(y_minus_mean*dinner_dz);
+						} else {
 							std::cerr << "[ERR] Additive means cannot be used in combination with price" << endl;
 							assert(0);
-						} else {
-							pvar.gamma.get_object(u,k).increase_grad_neg(y_minus_mean*dinner_dz);
 						}
 						// beta
 						dinner_dz = -price*pvar.gamma.get_object(u,k).e_x;
-						if(param.flag_gaussian) {
-							pvar.beta.get_object(i,k).increase_grad_neg(y_minus_mean*dinner_dz/hyper.s2noise);
-						} else if(param.flag_bernoulli) {
-							pvar.beta.get_object(i,k).increase_grad_neg(y_minus_mean*dinner_dz);
-						} else if(param.flag_additiveMean) {
+						if(!param.flag_additiveMean) {
+							pvar.beta.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+						} else {
 							std::cerr << "[ERR] Additive means cannot be used in combination with price" << endl;
 							assert(0);
+						}
+					}
+					// Increase gradient of xday
+					if(param.flag_day) {
+						int g_u = data.group_per_user.get_object(u);
+						int g_i = data.group_per_item.get_object(i);
+						int d = data.day_per_session.get_object(s);
+						pvar.x_gid.get_object(g_u,g_i,d).increase_grad(y_minus_mean);
+					}
+					// Increase gradient of trip effects
+					for(int k=0; k<param.flag_tripEffects; k++) {
+						// theta_trip
+						dinner_dz = pvar.beta_trip.get_object(i,k).e_x/trip_effect;
+						if(!param.flag_additiveMean) {
+							pvar.theta_trip.get_object(t,k).increase_grad(y_minus_mean*dinner_dz);
 						} else {
-							pvar.beta.get_object(i,k).increase_grad_neg(y_minus_mean*dinner_dz);
+							std::cerr << "[ERR] Additive means cannot be used in combination with trip effects" << endl;
+							assert(0);
+						}
+						// beta_trip
+						dinner_dz = pvar.theta_trip.get_object(t,k).e_x/trip_effect;
+						if(!param.flag_additiveMean) {
+							pvar.beta_trip.get_object(i,k).increase_grad(y_minus_mean*dinner_dz);
+						} else {
+							std::cerr << "[ERR] Additive means cannot be used in combination with trip effects" << endl;
+							assert(0);
 						}
 					}
 				}
 			}
 		}
 		delete [] suma;
-		// Scale up and down logp
-		logp *= param.zeroFactor*static_cast<double>(data.Ntrans*data.Nitems-data.obs.T)/static_cast<double>(data.Ntrans*param.negsamples);
-		return logp;
+		// Scale logp
+		return(sviFactor*logp);
 	}
 
-	static double compute_mean(const my_param &param, my_pvar &pvar, int i, int u, double *suma, double &argument, double price) {
+	static double compute_mean(my_data &data, const my_param &param, my_pvar &pvar, int t, int i, int u, int s, double *suma, double &argument, double &trip_effect) {
 		double inner_prod = 0.0;
+		double price = data.get_price(i,s,param);
+		trip_effect = 0.0;
 		// Compute inner product rho*suma
 		for(int k=0; k<param.K; k++) {
 			if(param.flag_userVec==0) {
@@ -585,8 +652,24 @@ public:
 		if(param.flag_itemIntercept) {
 			inner_prod += pvar.lambda0.get_object(i).e_x;
 		}
+		// Add price term
 		for(int k=0; k<param.flag_price; k++) {
 			inner_prod -= pvar.gamma.get_object(u,k).e_x*pvar.beta.get_object(i,k).e_x*price;
+		}
+		// Add per-day effect
+		if(param.flag_day) {
+			int d = data.day_per_session.get_object(s);
+			int g_u = data.group_per_user.get_object(u);
+			int g_i = data.group_per_item.get_object(i);
+			inner_prod += pvar.x_gid.get_object(g_u,g_i,d).e_x;
+		}
+		// Add per-trip effect
+		if(param.flag_tripEffects>0) {
+			for(int k=0; k<param.flag_tripEffects; k++) {
+				trip_effect += pvar.theta_trip.get_object(t,k).e_x*pvar.beta_trip.get_object(i,k).e_x;
+			}
+			trip_effect = my_max(trip_effect,0.001);
+			inner_prod += my_log(trip_effect);
 		}
 		// Extra computations (e.g., truncate or exponentiate)
 		if(param.flag_additiveMean) {
@@ -621,8 +704,9 @@ public:
 		}
 	}
 
+	/*
 	static void scale_neg_gradient(my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar, \
-								   Matrix1D<int> &neg_item_counts, Matrix2D<double> &grad_neg_alpha_aux) {
+								   Matrix1D<int> &neg_item_counts, Matrix2D<double> &grad_neg_alpha_aux, Matrix3D<int> &neg_xday_counts) {
 		double sviFactor;
 		// per-user variables
 		if(param.flag_userVec>0 || param.flag_price>0) {
@@ -658,6 +742,9 @@ public:
 						pvar.alpha.get_object(i,k).increase_grad(sviFactor*grad_neg_alpha_aux.get_object(i,k));
 					}
 				}
+				for(int k=0; k<param.flag_tripEffects; k++) {
+					pvar.beta_trip.get_object(i,k).scale_add_grad_neg(sviFactor);
+				}
 			}
 		}
 		// alpha
@@ -668,10 +755,38 @@ public:
 				pvar.alpha.get_object(i,k).scale_add_grad_neg(sviFactor);
 			}
 		}
+		// xday variables
+		if(param.flag_day) {
+			for(int g_u=0; g_u<data.NuserGroups; g_u++) {
+				for(int g_i=0; g_i<data.NitemGroups; g_i++) {
+					for(int d=0; d<data.Ndays; d++) {
+						int aux = neg_xday_counts.get_object(g_u,g_i,d);
+						if(aux>0) {
+							// The sviFactor is: ((#trans with a user from group g_u in day d)*(#items in group g_i)-(total #times an item from group g_i is purchased in a trip of a user from group g_u in day d))/(#negsamples in which a user in g_u buys an item in g_i in day d)
+							sviFactor = param.zeroFactor*static_cast<double>(data.count_trans_per_xday.get_object(g_u,d)*data.items_per_group.get_object(g_i).size()-data.lines_per_xday.get_object(g_u,g_i,d).size())/static_cast<double>(aux);
+							pvar.x_gid.get_object(g_u,g_i,d).scale_add_grad_neg(sviFactor);
+						}
+					}
+				}
+			}
+		}
+		// theta_trip
+		if(param.flag_tripEffects>0) {
+			for(int t=0; t<data.Ntrans; t++) {
+				sviFactor = param.zeroFactor*static_cast<double>(data.Nitems-data.items_per_trans.get_object(t).size())/static_cast<double>(param.negsamples);
+				for(int k=0; k<param.flag_tripEffects; k++) {
+					pvar.theta_trip.get_object(t,k).scale_add_grad_neg(sviFactor);
+				}
+			}
+		}
 	}
+	*/
 
 	static void compute_test_performance(int duration, my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar) {
 		if(param.noTest) {
+			return;
+		}
+		if(param.flag_tripEffects>0) {
 			return;
 		}
 
@@ -688,8 +803,8 @@ public:
 		double *suma = new double[param.K];
 		double *p_item = new double[data.Nitems];
 		double sum_norm;
-		double argument = 0;
-		double price = 0.0;
+		double argument = 0.0;
+		double trip_effect = 0.0;
 
 		// Compute sum_alpha for each transaction in test set
 		Matrix2D<double> test_sum_alpha = Matrix2D<double>(data.test_Ntrans,param.K);
@@ -745,10 +860,9 @@ public:
 			if(param.flag_binarizeContext) {
 				y_rem = 1.0;
 			}
-			price = data.get_price(i,s,param);
 
-			// Ignore "non-valid" transactions
-			if(test_valid_lines_per_trans.get_object(t)>1) {
+			// Ignore "non-valid" transactions and items that are not present in train.tsv
+			if(test_valid_lines_per_trans.get_object(t)>1 && data.lines_per_item.get_object(i).size()>0) {
 				// Remove the contribution of item i from sum_alpha
 				for(int k=0; k<param.K; k++) {
 					suma[k] = test_sum_alpha.get_object(t,k)-y_rem*pvar.alpha.get_object(i,k).e_x;
@@ -760,7 +874,7 @@ public:
 						suma[k] /= (data.test_items_per_trans.get_object(t).size()-1.0);
 					}
 				}
-				poiss_mean = compute_mean(param,pvar,i,u,suma,argument,price);
+				poiss_mean = compute_mean(data,param,pvar,t,i,u,s,suma,argument,trip_effect);
 				// (A) Compute the likelihood according to the model
 				if(param.flag_gaussian) {
 					llh -= 0.5*my_log(2.0*M_PI*hyper.s2noise)+0.5*my_pow2(y-poiss_mean)/hyper.s2noise;
@@ -774,8 +888,7 @@ public:
 				// (B) Compute the "fair" llh (requires iterate over all items j)
 				sum_norm = 0.0;
 				for(int j=0; j<data.Nitems; j++) {
-					price = data.get_price(j,s,param);
-					p_item[j] = compute_mean(param,pvar,j,u,suma,argument,price);
+					p_item[j] = compute_mean(data,param,pvar,t,j,u,s,suma,argument,trip_effect);
 					sum_norm += p_item[j];
 				}
 				// Normalize p_item
@@ -828,8 +941,8 @@ public:
 		double *suma = new double[param.K];
 		double *p_item = new double[data.Nitems];
 		double sum_norm;
-		double argument = 0;
-		double price = 0.0;
+		double argument = 0.0;
+		double trip_effect = 0.0;
 
 		// Ensure that sum_alpha is up-to-date
 		compute_sum_alpha(data,hyper,param,pvar);
@@ -857,8 +970,7 @@ public:
 					}
 				}
 				// Compute the Poisson mean
-				price = data.get_price(i,s,param);
-				poiss_mean = compute_mean(param,pvar,i,u,suma,argument,price);
+				poiss_mean = compute_mean(data,param,pvar,t,i,u,s,suma,argument,trip_effect);
 				// (A) Compute the likelihood according to the model
 				if(param.flag_gaussian) {
 					llh -= 0.5*my_log(2.0*M_PI*hyper.s2noise)+0.5*my_pow2(y-poiss_mean)/hyper.s2noise;
@@ -874,8 +986,7 @@ public:
 				// (B) Compute the "fair" llh (requires iterate over all items j)
 				sum_norm = 0.0;
 				for(int j=0; j<data.Nitems; j++) {
-					price = data.get_price(j,s,param);
-					p_item[j] = compute_mean(param,pvar,j,u,suma,argument,price);
+					p_item[j] = compute_mean(data,param,pvar,t,j,u,s,suma,argument,trip_effect);
 					sum_norm += p_item[j];
 				}
 				// Normalize p_item
@@ -938,6 +1049,16 @@ public:
 		}
 	}
 
+	static void set_to_zero(Matrix3D<int> &M) {
+		for(int i=0; i<M.get_size1(); i++) {
+			for(int j=0; j<M.get_size2(); j++) {
+				for(int k=0; k<M.get_size3(); k++) {
+					M.set_object(i,j,k,0);
+				}
+			}
+		}
+	}
+
 	static void take_grad_step(const my_data &data, const my_hyper &hyper, const my_param &param, my_pvar &pvar) {
 		for(int i=0; i<data.Nitems; i++) {
 			for(int k=0; k<param.K; k++) {
@@ -961,6 +1082,15 @@ public:
 			}
 			for(int i=0; i<data.Nitems; i++) {
 				pvar.beta.get_object(i,k).take_grad_step(param,param.eta,param.gamma,param.it);
+			}
+		}
+		if(param.flag_day) {
+			for(int g_u=0; g_u<data.NuserGroups; g_u++) {
+				for(int g_i=0; g_i<data.NitemGroups; g_i++) {
+					for(int d=0; d<data.Ndays; d++) {
+						pvar.x_gid.get_object(g_u,g_i,d).take_grad_step(param,param.eta,param.gamma,param.it);
+					}
+				}
 			}
 		}
 	}

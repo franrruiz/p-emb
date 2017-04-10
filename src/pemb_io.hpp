@@ -42,25 +42,16 @@ public:
 	        } else if(strcmp(argv[i], "-zeroFactor") == 0) {
 	            val = string(argv[++i]);
 	        	param.zeroFactor = std::stod(val);
-	        } else if(strcmp(argv[i], "-userVec") == 0) {
+	        } else if(strcmp(argv[i], "-batchsize") == 0) {
 	            val = string(argv[++i]);
-	        	param.flag_userVec = std::stoi(val);
+	        	param.batchsize = std::stoi(val);
 	        } else if(strcmp(argv[i], "-avgContext") == 0) {
 	            val = string(argv[++i]);
 	        	param.flag_avgContext = std::stoi(val);
 	        } else if(strcmp(argv[i], "-itemIntercept") == 0) {
 	        	param.flag_itemIntercept = true;
-	        } else if(strcmp(argv[i], "-price") == 0) {
-	            val = string(argv[++i]);
-	        	param.flag_price = std::stoi(val);
-	        } else if(strcmp(argv[i], "-normPrice") == 0) {
-	        	param.flag_normPrice = true;
 	        } else if(strcmp(argv[i], "-additiveMean") == 0) {
 	        	param.flag_additiveMean = true;
-	        } else if(strcmp(argv[i], "-ppca") == 0) {
-	        	param.flag_ppca = true;
-	        	std::cout << "[ERR] PPCA is not implemented yet" << endl;
-	        	assert(0);
 	        } else if(strcmp(argv[i], "-gaussian") == 0) {
 	        	param.flag_gaussian = true;
 	        } else if(strcmp(argv[i], "-bernoulli") == 0) {
@@ -105,6 +96,12 @@ public:
 	            param.valConsecutive = std::stoi(val);
 	        } else if(strcmp(argv[i], "-noRegulariz") == 0) {
 	            param.flag_regularization = false;
+	        } else if(strcmp(argv[i], "-keepOnly") == 0) {
+	            val = string(argv[++i]);
+	            param.lf_keepOnly = std::stoi(val);
+	        } else if(strcmp(argv[i], "-keepAbove") == 0) {
+	            val = string(argv[++i]);
+	            param.lf_keepAbove = std::stoi(val);
 	        } else if(strcmp(argv[i], "-s2rho") == 0) {
 	            val = string(argv[++i]);
 	            hyper.s2rho = std::stod(val);
@@ -120,6 +117,12 @@ public:
 	        } else if(strcmp(argv[i], "-s2beta") == 0) {
 	            val = string(argv[++i]);
 	            hyper.s2beta = std::stod(val);
+	        } else if(strcmp(argv[i], "-meangamma") == 0) {
+	            val = string(argv[++i]);
+	            hyper.mean_gamma = std::stod(val);
+	        } else if(strcmp(argv[i], "-meanbeta") == 0) {
+	            val = string(argv[++i]);
+	            hyper.mean_beta = std::stod(val);
 	        } else if(strcmp(argv[i], "-s2all") == 0) {
 	            val = string(argv[++i]);
 	            hyper.s2rho = std::stod(val);
@@ -193,10 +196,20 @@ public:
 	    	std::cerr << "[ERR] Wrong argument for -nsFreq" << endl;
 	    	assert(0);
 	    }
+        if(param.lf_keepAbove>0 && param.lf_keepOnly>0) {
+	    	std::cerr << "[ERR] Choose only one low-frequency method" << endl;
+	    	assert(0);
+        }
 	    // Set stdIni
         if(param.stdIni<=0.0) {
             param.stdIni = 0.1/sqrt(param.K);
         }
+        // Set flag_lf
+        if(param.lf_keepAbove>0) {
+        	param.lf_flag = 1;
+    	} else if(param.lf_keepOnly>0) {
+        	param.lf_flag = 2;
+    	}
 	}
 
     static string remove_final_slash(const string f) {
@@ -215,6 +228,9 @@ public:
 		string validationFname = param.datadir+"/validation.tsv";
 		unsigned int NiTr;
 		unsigned int NuTr;
+
+		// First, read train.tsv to count how many times each item appears and remove low-freq items
+		pre_read(trainFname,data,param);
 
 		// This is a 2-step process
 		// Step 1: Count #users, #items (and #sessions)
@@ -261,6 +277,61 @@ public:
 		fscanf(fin,"%llu\t%llu\t%llu\t%u\n",uid,mid,sid,rating);
 	}
 
+	static void pre_read(string fname, my_data &data, const my_param &param) {
+		if(param.lf_flag<=0) {
+			return;
+		}
+
+		unsigned long long uid;
+		unsigned long long mid;
+		unsigned long long sid;
+		unsigned int rating;
+
+		std::map<unsigned long long, int> item_counts;
+		std::vector<int> all_counts;
+		int min_freq;
+
+		// Read the training data
+	  	FILE *fin = fopen(fname.c_str(),"r");
+	  	if(!fin) {
+	  		std::cerr << "[ERR] Unable to open " << fname << endl;
+	  		assert(0);
+	  	}
+		while(!feof(fin)){
+			// Read a line
+			read_a_line(param,fin,&uid,&mid,&sid,&rating);
+			// Append item id to the list of valid items
+			auto iter_i = item_counts.find(mid);
+			if(iter_i==item_counts.end()) {
+				item_counts.insert(std::pair<unsigned long long,int>(mid,1));
+			} else {
+				iter_i->second = iter_i->second+1;
+			}
+		}
+		fclose(fin);
+
+		// Order by frequency
+		for(auto iter_i=item_counts.begin(); iter_i!=item_counts.end(); ++iter_i) {
+			all_counts.push_back(iter_i->second);
+		}
+		std::sort(all_counts.begin(),all_counts.end(),std::greater<int>());
+		if(param.lf_keepAbove>0) {
+			min_freq = param.lf_keepAbove;
+		} else if(param.lf_keepOnly>0) {
+			min_freq = all_counts.at(param.lf_keepOnly-1);
+		} else {
+			std::cerr << "[ERR] This should not happen. Review function 'pre_read'" << endl;
+			assert(0);
+		}
+
+		// Insert elements to valid_items
+		for(auto iter_i=item_counts.begin(); iter_i!=item_counts.end(); ++iter_i) {
+			if(iter_i->second >= min_freq) {
+				data.valid_items.push_back(iter_i->first);
+			}
+		}
+	}
+
 	static unsigned int count_input_tsv_file(string fname, my_data &data, const my_param &param, int &n_u, int &n_i, int &n_s) {
 		unsigned long long uid;
 		unsigned long long mid;
@@ -276,21 +347,24 @@ public:
 		while(!feof(fin)){
 			// Read a line
 			read_a_line(param,fin,&uid,&mid,&sid,&rating);
-			nlines++;
-			// Append user id to the list of user id's
-			if(data.user_ids.find(uid) == data.user_ids.end()) {
-				data.user_ids.insert(std::pair<unsigned long long,int>(uid,n_u));
-				n_u++;
-			}
-			// Append item id to the list of item id's
-			if(data.item_ids.find(mid) == data.item_ids.end()) {
-				data.item_ids.insert(std::pair<unsigned long long,int>(mid,n_i));
-				n_i++;
-			}
-			// Append session id to the list of session id's
-			if(data.session_ids.find(sid) == data.session_ids.end()) {
-				data.session_ids.insert(std::pair<unsigned long long,int>(sid,n_s));
-				n_s++;
+			auto iter_i = std::find(data.valid_items.begin(),data.valid_items.end(),mid);
+			if(param.lf_flag<=0 || iter_i!=data.valid_items.end()) {
+				nlines++;
+				// Append user id to the list of user id's
+				if(data.user_ids.find(uid) == data.user_ids.end()) {
+					data.user_ids.insert(std::pair<unsigned long long,int>(uid,n_u));
+					n_u++;
+				}
+				// Append item id to the list of item id's
+				if(data.item_ids.find(mid) == data.item_ids.end()) {
+					data.item_ids.insert(std::pair<unsigned long long,int>(mid,n_i));
+					n_i++;
+				}
+				// Append session id to the list of session id's
+				if(data.session_ids.find(sid) == data.session_ids.end()) {
+					data.session_ids.insert(std::pair<unsigned long long,int>(sid,n_s));
+					n_s++;
+				}
 			}
 		}
 		fclose(fin);
@@ -313,17 +387,20 @@ public:
 		while(!feof(fin)){
 			// Read a line
 			read_a_line(param,fin,&uid,&mid,&sid,&rating);
-			// Store values
-			data_aux.y_user[count] = data.user_ids.find(uid)->second;
-			data_aux.y_item[count] = data.item_ids.find(mid)->second;
-			if(param.flag_bernoulli) {
-				data_aux.y_rating[count] = (rating>0)?1:0;
-			} else {
-				data_aux.y_rating[count] = rating;
+			auto iter_i = std::find(data.valid_items.begin(),data.valid_items.end(),mid);
+			if(param.lf_flag<=0 || iter_i!=data.valid_items.end()) {
+				// Store values
+				data_aux.y_user[count] = data.user_ids.find(uid)->second;
+				data_aux.y_item[count] = data.item_ids.find(mid)->second;
+				if(param.flag_bernoulli) {
+					data_aux.y_rating[count] = (rating>0)?1:0;
+				} else {
+					data_aux.y_rating[count] = rating;
+				}
+				data_aux.y_sess[count] = data.session_ids.find(sid)->second;
+				// Increase count
+				count++;
 			}
-			data_aux.y_sess[count] = data.session_ids.find(sid)->second;
-			// Increase count
-			count++;
 		}
 		fclose(fin);
 	}
@@ -409,6 +486,187 @@ public:
 	    	}
 	    }
 	}
+
+	static void read_itemgroups(my_data &data, const my_param &param) {
+		unsigned long long iid;
+		unsigned long long gid;
+		int i;
+		int g;
+		int n_g = 0;
+
+		data.group_per_item = Matrix1D<int>(data.Nitems);
+		string fname = param.datadir+"/itemGroup.tsv";
+		// Read the file
+		FILE *fin = fopen(fname.c_str(),"r");
+	  	if(!fin) {
+	  		std::cerr << "[ERR] Unable to open " << fname << endl;
+	  		assert(0);
+	  	}
+		while(!feof(fin)){
+			fscanf(fin, "%llu\t%llu\n", &iid, &gid);
+			std::map<unsigned long long,int>::iterator iter_i = data.item_ids.find(iid);
+			if(iter_i==data.item_ids.end()) {
+				i = data.Nitems;
+				std::cerr << "[WARN] Item " << iid << " in 'itemGroup.tsv' not found in train/test/validation" << endl;
+			} else {
+				i = iter_i->second;
+			}
+			if(i<data.Nitems) {
+				std::map<unsigned long long,int>::const_iterator iter_g = data.itemgroup_ids.find(gid);
+				if(iter_g==data.itemgroup_ids.end()) {
+					data.itemgroup_ids.insert(std::pair<unsigned long long,int>(gid,n_g));
+					n_g++;
+					iter_g = data.itemgroup_ids.find(gid);
+				}
+				g = iter_g->second;
+				data.group_per_item.set_object(i,g);
+			}
+		}
+		fclose(fin);
+		// Other data variables
+		data.NitemGroups = data.itemgroup_ids.size();
+		data.items_per_group = Matrix1D<std::vector<int>>(data.NitemGroups);
+		for(int ii=0; ii<data.Nitems; ii++) {
+			data.items_per_group.get_object(data.group_per_item.get_object(ii)).push_back(ii);
+		}
+	}
+
+	static void read_usergroups(my_data &data, const my_param &param) {
+		unsigned long long uid;
+		unsigned long long gid;
+		int u;
+		int g;
+		int n_g = 0;
+
+		data.group_per_user = Matrix1D<int>(data.Nusers);
+		string fname = param.datadir+"/userGroup.tsv";
+		// Read the file
+		FILE *fin = fopen(fname.c_str(),"r");
+	  	if(!fin) {
+	  		std::cerr << "[ERR] Unable to open " << fname << endl;
+	  		assert(0);
+	  	}
+		while(!feof(fin)){
+			fscanf(fin, "%llu\t%llu\n", &uid, &gid);
+			std::map<unsigned long long,int>::const_iterator iter_u = data.user_ids.find(uid);
+			if(iter_u==data.user_ids.end()) {
+				u = data.Nusers;
+				std::cerr << "[WARN] User " << uid << " in 'userGroup.tsv' not found in train/test/validation" << endl;
+			} else {
+				u = iter_u->second;
+			}
+			if(u<data.Nusers) {
+				std::map<unsigned long long,int>::iterator iter_g = data.usergroup_ids.find(gid);
+				if(iter_g==data.usergroup_ids.end()) {
+					data.usergroup_ids.insert(std::pair<unsigned long long,int>(gid,n_g));
+					n_g++;
+					iter_g = data.usergroup_ids.find(gid);
+				}
+				g = iter_g->second;
+				data.group_per_user.set_object(u,g);
+			}
+		}
+		fclose(fin);
+		// Other data variables
+		data.NuserGroups = data.usergroup_ids.size();
+		data.users_per_group = Matrix1D<std::vector<int>>(data.NuserGroups);
+		for(int uu=0; uu<data.Nusers; uu++) {
+			data.users_per_group.get_object(data.group_per_user.get_object(uu)).push_back(uu);
+		}
+	}
+
+	static void read_sess_days(my_data &data, const my_param &param) {
+		unsigned long long did;
+		unsigned long long wid;
+		unsigned long long sid;
+		int s;
+		int d;
+		int w;
+		double hh;
+		int n_d = 0;
+		int n_w = 0;
+
+		string fname = param.datadir+"/sess_days.tsv";
+		// Read the file & create day_per_session
+		data.day_per_session = Matrix1D<int>(data.Nsessions);
+		data.weekday_per_session = Matrix1D<int>(data.Nsessions);
+		data.hour_per_session = Matrix1D<double>(data.Nsessions);
+		FILE *fin = fopen(fname.c_str(),"r");
+	  	if(!fin) {
+	  		std::cerr << "[ERR] Unable to open " << fname << endl;
+	  		assert(0);
+	  	}
+		while(!feof(fin)){
+			fscanf(fin, "%llu\t%llu\t%llu\t%lf\n", &sid, &did, &wid, &hh);
+			std::map<unsigned long long,int>::iterator iter_s = data.session_ids.find(sid);
+			if(iter_s==data.session_ids.end()) {
+				s = data.Nsessions;
+				std::cerr << "[WARN] Session " << sid << " in 'sess_days.tsv' not found in train/test/validation" << endl;
+			} else {
+				s = iter_s->second;
+			}
+			if(s<data.Nsessions) {
+				std::map<unsigned long long,int>::const_iterator iter_d = data.day_ids.find(did);
+				if(iter_d==data.day_ids.end()) {
+					data.day_ids.insert(std::pair<unsigned long long,int>(did,n_d));
+					n_d++;
+					iter_d = data.day_ids.find(did);
+				}
+				d = iter_d->second;
+				data.day_per_session.set_object(s,d);
+
+				std::map<unsigned long long,int>::const_iterator iter_w = data.weekday_ids.find(wid);
+				if(iter_w==data.weekday_ids.end()) {
+					data.weekday_ids.insert(std::pair<unsigned long long,int>(wid,n_w));
+					n_w++;
+					iter_w = data.weekday_ids.find(wid);
+				}
+				w = iter_w->second;
+				data.weekday_per_session.set_object(s,w);
+
+				data.hour_per_session.set_object(s,hh);
+			}
+		}
+		fclose(fin);
+
+		// Count Ndays
+		data.Ndays = data.day_ids.size();
+		data.Nweekdays = data.weekday_ids.size();
+
+		// Create sessions_per_day
+		data.sessions_per_day = Matrix1D<std::vector<int>>(data.Ndays);
+		for(int ss=0; ss<data.Nsessions; ss++) {
+			d = data.day_per_session.get_object(ss);
+			data.sessions_per_day.get_object(d).push_back(ss);
+		}
+
+		// Create sessions_per_weekday
+		data.sessions_per_weekday = Matrix1D<std::vector<int>>(data.Nweekdays);
+		for(int ss=0; ss<data.Nsessions; ss++) {
+			w = data.weekday_per_session.get_object(ss);
+			data.sessions_per_weekday.get_object(w).push_back(ss);
+		}
+	}
+
+	static void create_lines_per_xday(my_data &data, const my_param &param) {
+		int u;
+		int i;
+		int g_u;
+  		int g_i;
+  		int s;
+  		int d;
+
+  		data.lines_per_xday = Matrix3D<std::vector<int>>(data.NuserGroups,data.NitemGroups,data.Ndays);
+  		for(unsigned int t=0; t<data.obs.T; t++) {
+  			u = data.obs.y_user[t];
+  			g_u = data.group_per_user.get_object(u);
+  			i = data.obs.y_item[t];
+  			g_i = data.group_per_item.get_object(i);
+  			s = data.obs.y_sess[t];
+  			d = data.day_per_session.get_object(s);
+  			data.lines_per_xday.get_object(g_u,g_i,d).push_back(static_cast<int>(t));
+	  	}
+	}
 };
 
 class my_output {
@@ -448,6 +706,12 @@ public:
 				sa << "norm";
 			}
 		}
+		if(param.flag_day) {
+			sa << "-days";
+		}
+		if(param.flag_tripEffects>0) {
+			sa << "-trips" << param.flag_tripEffects;
+		}
 		sa << "-eta" << param.eta;
 		if(param.zeroFactor>=0) {
 			sa << "-zF" << param.zeroFactor;
@@ -457,6 +721,9 @@ public:
 		}
 		if(param.flag_nsFreq!=-1) {
 			sa << "-nsFreq" << param.flag_nsFreq;
+		}
+		if(param.batchsize>0) {
+			sa << "-batch" << param.batchsize;
 		}
 		if(param.label!="") {
 			sa << "-" << param.label;
@@ -487,6 +754,10 @@ public:
         write_log(param.outdir," +Nsessions="+std::to_string(data.Nsessions));
         write_log(param.outdir," +Ntrans="+std::to_string(data.Ntrans));
         write_log(param.outdir," +Ntrans (test)="+std::to_string(data.test_Ntrans));
+        write_log(param.outdir," +Ndays="+std::to_string(data.Ndays));
+        write_log(param.outdir," +Nweekdays="+std::to_string(data.Nweekdays));
+        write_log(param.outdir," +NuserGroups="+std::to_string(data.NuserGroups));
+        write_log(param.outdir," +NitemGroups="+std::to_string(data.NitemGroups));
         write_log(param.outdir," +Lines of train.tsv="+std::to_string(data.obs.T));
         write_log(param.outdir," +Lines of test.tsv="+std::to_string(data.obs_test.T));
         write_log(param.outdir," +Lines of validation.tsv="+std::to_string(data.obs_val.T));
@@ -502,10 +773,13 @@ public:
         write_log(param.outdir," +negsamples="+std::to_string(param.negsamples));
         write_log(param.outdir," +nsFreq="+std::to_string(param.flag_nsFreq));
         write_log(param.outdir," +zeroFactor="+std::to_string(param.zeroFactor));
+        write_log(param.outdir," +batchsize="+std::to_string(param.batchsize));
         write_log(param.outdir," +userVec="+std::to_string(param.flag_userVec));
         write_log(param.outdir," +avgContext="+std::to_string(param.flag_avgContext));
         write_log(param.outdir," +itemIntercept="+std::to_string(param.flag_itemIntercept));
         write_log(param.outdir," +price="+std::to_string(param.flag_price));
+        write_log(param.outdir," +day="+std::to_string(param.flag_day));
+        write_log(param.outdir," +trips="+std::to_string(param.flag_tripEffects));
         write_log(param.outdir," +normPrice="+std::to_string(param.flag_normPrice));
         write_log(param.outdir," +binarizeContext="+std::to_string(param.flag_binarizeContext));
         write_log(param.outdir," +additiveMean="+std::to_string(param.flag_additiveMean));
@@ -519,6 +793,8 @@ public:
         write_log(param.outdir," +gamma="+std::to_string(param.gamma));
         write_log(param.outdir," +valTolerance="+std::to_string(param.valTolerance));
         write_log(param.outdir," +valConsecutive="+std::to_string(param.valConsecutive));
+        write_log(param.outdir," +keepOnly="+std::to_string(param.lf_keepOnly));
+        write_log(param.outdir," +keepAbove="+std::to_string(param.lf_keepAbove));
 
         // Write initialization
         write_log(param.outdir,"Initialization:");
@@ -538,7 +814,13 @@ public:
         write_log(param.outdir," +s2theta="+std::to_string(hyper.s2theta));
         write_log(param.outdir," +s2gamma="+std::to_string(hyper.s2gamma));
         write_log(param.outdir," +s2beta="+std::to_string(hyper.s2beta));
+        write_log(param.outdir," +meangamma="+std::to_string(hyper.mean_gamma));
+        write_log(param.outdir," +meanbeta="+std::to_string(hyper.mean_beta));
+        write_log(param.outdir," +s2xday="+std::to_string(hyper.s2xday));
+        write_log(param.outdir," +meanxday="+std::to_string(hyper.mean_xday));
         write_log(param.outdir," +s2noise="+std::to_string(hyper.s2noise));
+        write_log(param.outdir," +s2trip="+std::to_string(hyper.s2trip));
+        write_log(param.outdir," +mean_trip="+std::to_string(hyper.mean_trip));
 	}
 
     static void write_log(const string folder, const string str) {
@@ -639,6 +921,36 @@ public:
     	}
     }
 
+    static void write_matrix_xday(string filename, const std::map<unsigned long long,int> &ids_g, const std::map<unsigned long long,int> &ids_i, const std::map<unsigned long long,int> &ids_d, Matrix3D<my_pvar_aux> &M) {
+    	char buffer[300];
+    	string aux;
+    	int g;
+    	int i;
+    	int d;
+
+    	std::map<unsigned long long,int>::const_iterator iter_g;
+    	std::map<unsigned long long,int>::const_iterator iter_i;
+    	std::map<unsigned long long,int>::const_iterator iter_d;
+
+    	// Print values
+    	int count = 0;
+    	for(iter_g=ids_g.begin(); iter_g!=ids_g.end(); ++iter_g) {
+    		g = iter_g->second;
+    		for(iter_i=ids_i.begin(); iter_i!=ids_i.end(); ++iter_i) {
+    			i = iter_i->second;
+    			for(iter_d=ids_d.begin(); iter_d!=ids_d.end(); ++iter_d) {
+    				d = iter_d->second;
+	    			// Print mean
+		    		sprintf(buffer,"%d\t%llu\t%llu\t%llu\t%.16f",count,iter_g->first,iter_i->first,iter_d->first,M.get_object(g,i,d).e_x);
+		    		aux = string(buffer);
+	    			write_line(filename,aux);
+	    			// Increase line number
+	    			count++;
+    			}
+    		}
+    	}
+    }
+
 	static void write_matrix_users_sess(string filename, my_data &data, Matrix2D<my_pvar_aux> &M) {
     	char buffer[100];
     	int u;
@@ -696,6 +1008,12 @@ public:
 	    	write_matrix(param.outdir+"/param_gamma"+label+".txt",data.user_ids,pvar.gamma);
 			write_matrix(param.outdir+"/param_beta"+label+".txt",data.item_ids,pvar.beta);
 	    }
+	    if(param.flag_day) {
+	    	write_matrix_xday(param.outdir+"/param_xday"+label+".txt",data.usergroup_ids,data.itemgroup_ids,data.day_ids,pvar.x_gid);
+	    }
+	    if(param.flag_tripEffects>0) {
+	    	write_matrix(param.outdir+"/param_betatrip"+label+".txt",data.item_ids,pvar.beta_trip);
+    	}
     }
 
     static void write_objective_function(const my_param &param, double logp) {
@@ -704,6 +1022,21 @@ public:
     	string aux = string(buffer);
     	write_line(param.outdir+"/obj_function.txt",aux);
     }
+
+    static void write_vocab(my_data &data, const my_param &param) {
+    	char buffer[300];
+    	string filename = param.outdir+"/vocab.txt";
+    	unsigned long long iName;
+    	int i;
+		for(const auto &it : data.item_ids) {
+			iName = it.first;
+			i = it.second;
+			if(data.lines_per_item.get_object(i).size()>0) {
+		    	sprintf(buffer,"%llu\n",iName);
+		    	write_line(filename,string(buffer));
+			}
+		}
+	}
 };
 
 #endif
