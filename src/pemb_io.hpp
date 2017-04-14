@@ -45,30 +45,13 @@ public:
 	        } else if(strcmp(argv[i], "-batchsize") == 0) {
 	            val = string(argv[++i]);
 	        	param.batchsize = std::stoi(val);
-	        } else if(strcmp(argv[i], "-userVec") == 0) {
-	            val = string(argv[++i]);
-	        	param.flag_userVec = std::stoi(val);
-	        } else if(strcmp(argv[i], "-days") == 0) {
-	            param.flag_day = true;
-	        } else if(strcmp(argv[i], "-trips") == 0) {
-	            val = string(argv[++i]);
-	            param.flag_tripEffects = std::stoi(val);
 	        } else if(strcmp(argv[i], "-avgContext") == 0) {
 	            val = string(argv[++i]);
 	        	param.flag_avgContext = std::stoi(val);
 	        } else if(strcmp(argv[i], "-itemIntercept") == 0) {
 	        	param.flag_itemIntercept = true;
-	        } else if(strcmp(argv[i], "-price") == 0) {
-	            val = string(argv[++i]);
-	        	param.flag_price = std::stoi(val);
-	        } else if(strcmp(argv[i], "-normPrice") == 0) {
-	        	param.flag_normPrice = true;
 	        } else if(strcmp(argv[i], "-additiveMean") == 0) {
 	        	param.flag_additiveMean = true;
-	        } else if(strcmp(argv[i], "-ppca") == 0) {
-	        	param.flag_ppca = true;
-	        	std::cout << "[ERR] PPCA is not implemented yet" << endl;
-	        	assert(0);
 	        } else if(strcmp(argv[i], "-gaussian") == 0) {
 	        	param.flag_gaussian = true;
 	        } else if(strcmp(argv[i], "-bernoulli") == 0) {
@@ -97,14 +80,6 @@ public:
 	        } else if(strcmp(argv[i], "-iniPath") == 0) {
 	            val = string(argv[++i]);
 	            param.iniPath = remove_final_slash(val);
-	        } else if(strcmp(argv[i], "-iniThetaVal") == 0) {
-	            val = string(argv[++i]);
-	            param.flag_iniThetaVal = true;
-	            param.iniThetaVal = std::stod(val);
-	        } else if(strcmp(argv[i], "-iniPriceVal") == 0) {
-	            val = string(argv[++i]);
-	            param.flag_iniPriceVal = true;
-	            param.iniPriceVal = std::stod(val);
 	        } else if(strcmp(argv[i], "-valTolerance") == 0) {
 	            val = string(argv[++i]);
 	            param.valTolerance = std::stod(val);
@@ -125,21 +100,6 @@ public:
 	        } else if(strcmp(argv[i], "-s2alpha") == 0) {
 	            val = string(argv[++i]);
 	            hyper.s2alpha = std::stod(val);
-	        } else if(strcmp(argv[i], "-s2theta") == 0) {
-	            val = string(argv[++i]);
-	            hyper.s2theta = std::stod(val);
-	        } else if(strcmp(argv[i], "-s2gamma") == 0) {
-	            val = string(argv[++i]);
-	            hyper.s2gamma = std::stod(val);
-	        } else if(strcmp(argv[i], "-s2beta") == 0) {
-	            val = string(argv[++i]);
-	            hyper.s2beta = std::stod(val);
-	        } else if(strcmp(argv[i], "-meangamma") == 0) {
-	            val = string(argv[++i]);
-	            hyper.mean_gamma = std::stod(val);
-	        } else if(strcmp(argv[i], "-meanbeta") == 0) {
-	            val = string(argv[++i]);
-	            hyper.mean_beta = std::stod(val);
 	        } else if(strcmp(argv[i], "-s2all") == 0) {
 	            val = string(argv[++i]);
 	            hyper.s2rho = std::stod(val);

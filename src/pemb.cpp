@@ -115,6 +115,7 @@ int main (int argc, char *argv[]) {
                 my_infer::compute_test_performance(duration,data,hyper,param,pvar);
             }
             if(!param.noVal && (param.it>3*param.rfreq)) {
+                /*
                 std::cout << " (validation llh relative change (abs value): " << fabs((val_llh-param.prev_val_llh)/param.prev_val_llh) << ")" << endl;
                 // If log likelihood increased, is not zero, and it increased less than 0.000001 of the previous value, set why to zero
                 if(val_llh>=param.prev_val_llh && param.prev_val_llh!=0 && fabs((val_llh-param.prev_val_llh)/param.prev_val_llh)<param.valTolerance) {
@@ -130,6 +131,7 @@ int main (int argc, char *argv[]) {
                     stop = true;
                     why = 1;
                 }
+                */
             }
             param.prev_val_llh = val_llh;
         }
