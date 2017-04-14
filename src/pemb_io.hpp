@@ -45,13 +45,30 @@ public:
 	        } else if(strcmp(argv[i], "-batchsize") == 0) {
 	            val = string(argv[++i]);
 	        	param.batchsize = std::stoi(val);
+	        } else if(strcmp(argv[i], "-userVec") == 0) {
+	            val = string(argv[++i]);
+	        	param.flag_userVec = std::stoi(val);
+	        } else if(strcmp(argv[i], "-days") == 0) {
+	            param.flag_day = true;
+	        } else if(strcmp(argv[i], "-trips") == 0) {
+	            val = string(argv[++i]);
+	            param.flag_tripEffects = std::stoi(val);
 	        } else if(strcmp(argv[i], "-avgContext") == 0) {
 	            val = string(argv[++i]);
 	        	param.flag_avgContext = std::stoi(val);
 	        } else if(strcmp(argv[i], "-itemIntercept") == 0) {
 	        	param.flag_itemIntercept = true;
+	        } else if(strcmp(argv[i], "-price") == 0) {
+	            val = string(argv[++i]);
+	        	param.flag_price = std::stoi(val);
+	        } else if(strcmp(argv[i], "-normPrice") == 0) {
+	        	param.flag_normPrice = true;
 	        } else if(strcmp(argv[i], "-additiveMean") == 0) {
 	        	param.flag_additiveMean = true;
+	        } else if(strcmp(argv[i], "-ppca") == 0) {
+	        	param.flag_ppca = true;
+	        	std::cout << "[ERR] PPCA is not implemented yet" << endl;
+	        	assert(0);
 	        } else if(strcmp(argv[i], "-gaussian") == 0) {
 	        	param.flag_gaussian = true;
 	        } else if(strcmp(argv[i], "-bernoulli") == 0) {
@@ -1032,7 +1049,7 @@ public:
 			iName = it.first;
 			i = it.second;
 			if(data.lines_per_item.get_object(i).size()>0) {
-		    	sprintf(buffer,"%llu\n",iName);
+		    	sprintf(buffer,"%llu\t%lu",iName,data.lines_per_item.get_object(i).size());
 		    	write_line(filename,string(buffer));
 			}
 		}
