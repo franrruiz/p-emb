@@ -45,6 +45,9 @@ public:
 	        } else if(strcmp(argv[i], "-batchsize") == 0) {
 	            val = string(argv[++i]);
 	        	param.batchsize = std::stoi(val);
+	        } else if(strcmp(argv[i], "-userVec") == 0) {
+	            val = string(argv[++i]);
+	        	param.flag_userVec = std::stoi(val); 
 	        } else if(strcmp(argv[i], "-avgContext") == 0) {
 	            val = string(argv[++i]);
 	        	param.flag_avgContext = std::stoi(val);

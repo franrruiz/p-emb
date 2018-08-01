@@ -17,11 +17,21 @@ OPTIONS:
 
 -outdir <string>       path to directory where output files will be written
                        [default: .]
+-userVec <int>         use per-user vectors (if 0, no per-user vectors are
+                       included; if 1, the per-user vectors are added to the
+                       context; if 2, the per-user vectors are multiplicative;
+                       if 3, the per-user vectors interact with alpha)
+                       [default: 0] 
 
 -K <int>               number of latent factors
                        [default: 50]
 -itemIntercept         use per-item intercepts
                        [default: disabled]
+-userVec <int>         use per-user vectors (if 0, no per-user vectors are
+                       included; if 1, the per-user vectors are added to the
+                       context; if 2, the per-user vectors are multiplicative;
+                       if 3, the per-user vectors interact with alpha)
+                       [default: 0] 
 -avgContext <int>      define context averaging (if 0, no averaging is
                        performed; if 1, the context is averaged by the sum of
                        ratings/units; if 2, the context is averaged by the number
