@@ -1,7 +1,7 @@
 Poisson embeddings
 ------------------
 
-This implements exponential family embeddings for shopping data, as described in
+This implements exponential family embeddings for discrete data, as described in
 
   M. Rudolph, F. J. R. Ruiz, S. Mandt, and D. M. Blei. Exponential Family Embeddings.
   Advances in Neural Information Processing Systems. Barcelona (Spain), December 2016.
