@@ -1,5 +1,5 @@
-Poisson embeddings
-------------------
+Poisson/Bernoulli embeddings
+----------------------------
 
 This implements exponential family embeddings for discrete data, as described in
 
